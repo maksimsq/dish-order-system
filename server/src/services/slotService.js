@@ -83,7 +83,7 @@ function validateSlot(slotKey) {
   if (currentCount >= maxOrders) {
     return {
       valid: false,
-      reason: `ліміт замовлень на інтервал ${slotKey} вичерпано (${currentCount}/${maxOrders})`
+      reason: `ліміт замовлень на інтервал ${slotKey} вичерпано`
     };
   }
 

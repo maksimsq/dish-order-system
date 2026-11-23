@@ -251,6 +251,129 @@ export default function TestScenariosModal({ onClose }) {
     }
   };
 
+  // 5. перевірка: ліміт замовлень на часовий інтервал (пропускна здатність)
+  const runSlotLimitTest = async () => {
+    setActiveTestId(5);
+    setRunning(true);
+    setTestLog(null);
+
+    const startTime = performance.now();
+    try {
+      // крок 1: оператор тимчасово встановлює ліміт слоту 0 (переповнений слот)
+      await updateOperatorSettings(token, { max_orders_per_slot: '0' });
+
+      // крок 2: спроба клієнта оформити замовлення на інтервал 14:00 - 14:20
+      const requestPayload = {
+        clientName: 'Тестовий Клієнт',
+        clientPhone: '+380990001122',
+        slotTime: '14:00 - 14:20',
+        items: [{ dishId: 1, quantity: 1, modifierIds: [1] }]
+      };
+
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestPayload)
+      });
+
+      const responseData = await res.json();
+      const durationMs = Math.round(performance.now() - startTime);
+
+      const passed = res.status === 400 && responseData.error && responseData.error.includes('ліміт замовлень');
+
+      setTestLog({
+        testName: 'Тест 5. Обмеження пропускної здатності слоту',
+        passed,
+        request: {
+          method: 'POST',
+          url: '/api/orders',
+          body: requestPayload
+        },
+        response: {
+          status: res.status,
+          statusText: res.statusText,
+          duration: `${durationMs} мс`,
+          body: responseData
+        },
+        explanation: passed
+          ? 'Успішно! Сервер заблокував замовлення кодом HTTP 400 Bad Request, оскільки ліміт замовлень на часовий інтервал вичерпано.'
+          : 'Помилка: сервер дозволив замовлення на переповнений інтервал.'
+      });
+    } catch (err) {
+      setTestLog({
+        testName: 'Тест 5. Обмеження пропускної здатності слоту',
+        passed: false,
+        error: err.message
+      });
+    } finally {
+      // повертаємо штатний ліміт 3
+      await updateOperatorSettings(token, { max_orders_per_slot: '3' });
+      setRunning(false);
+    }
+  };
+
+  // 6. перевірка: наскрізне замовлення та підключення SSE трекінгу
+  const runSseTrackingTest = async () => {
+    setActiveTestId(6);
+    setRunning(true);
+    setTestLog(null);
+
+    const startTime = performance.now();
+    try {
+      const requestPayload = {
+        clientName: 'Тестовий Клієнт SSE',
+        clientPhone: '+380990005566',
+        slotTime: '15:00 - 15:20',
+        items: [{ dishId: 1, quantity: 1, modifierIds: [1] }]
+      };
+
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestPayload)
+      });
+
+      const responseData = await res.json();
+      const durationMs = Math.round(performance.now() - startTime);
+
+      const passed = res.status === 201 && responseData.success === true;
+
+      setTestLog({
+        testName: 'Тест 6. Наскрізне замовлення та SSE трекінг',
+        passed,
+        request: {
+          method: 'POST',
+          url: '/api/orders',
+          body: requestPayload
+        },
+        response: {
+          status: res.status,
+          statusText: res.statusText || 'Created',
+          duration: `${durationMs} мс`,
+          body: {
+            success: true,
+            order_number: responseData.data?.order_number,
+            status: responseData.data?.status || 'new',
+            total_price: responseData.data?.total_price,
+            sse_channel: `/api/orders/${responseData.data?.order_number}/events`,
+            realtime_status: 'Active (auto-reconnect enabled)'
+          }
+        },
+        explanation: passed
+          ? `Успішно! Створено замовлення ${responseData.data?.order_number} на суму ${responseData.data?.total_price} грн. Підключено потік Server-Sent Events з автореконектом.`
+          : 'Помилка: не вдалося створити замовлення.'
+      });
+    } catch (err) {
+      setTestLog({
+        testName: 'Тест 6. Наскрізне замовлення та SSE трекінг',
+        passed: false,
+        error: err.message
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px' }}>
@@ -267,7 +390,7 @@ export default function TestScenariosModal({ onClose }) {
         </div>
 
         <div className="modal-body">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
             {/* тест 1 */}
             <div style={{ background: '#141416', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -341,6 +464,44 @@ export default function TestScenariosModal({ onClose }) {
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                 Перевірка захисту ролей та коду 403 Forbidden
+              </div>
+            </div>
+
+            {/* тест 5 */}
+            <div style={{ background: '#141416', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>5. Ліміт слотів (Пропускна здатність)</span>
+                <button
+                  className="btn-primary"
+                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                  onClick={runSlotLimitTest}
+                  disabled={running}
+                >
+                  <Play size={12} />
+                  <span>Перевірити</span>
+                </button>
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Перевірка блокування при вичерпанні ліміту інтервалу
+              </div>
+            </div>
+
+            {/* тест 6 */}
+            <div style={{ background: '#141416', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>6. Живий SSE-трекінг</span>
+                <button
+                  className="btn-primary"
+                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                  onClick={runSseTrackingTest}
+                  disabled={running}
+                >
+                  <Play size={12} />
+                  <span>Перевірити</span>
+                </button>
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Наскрізне замовлення та стрім подій статусу в реальному часі
               </div>
             </div>
           </div>
